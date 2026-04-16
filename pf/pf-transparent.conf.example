@@ -1,0 +1,34 @@
+# macOS transparent proxy pf rules (route-to + rdr on lo0)
+# Adapt the variables below to your environment.
+
+# --- Variables ---
+
+# Your upstream proxy server IP (MUST be excluded to prevent loops)
+proxy_server = "YOUR_PROXY_SERVER_IP"
+
+# pf2socks listen port
+tproxy_port = "1234"
+
+# Networks to exclude from proxying (local, private, VPN, multicast)
+skip_nets = "{ 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, \
+              100.64.0.0/10, 169.254.0.0/16, 224.0.0.0/4, 255.255.255.255/32 }"
+
+# --- rdr rules (redirect on lo0) ---
+no rdr on lo0 proto tcp from any to 127.0.0.1
+no rdr on lo0 proto tcp from any to $proxy_server
+no rdr on lo0 proto tcp from any to $skip_nets
+rdr pass on lo0 proto tcp from any to any -> 127.0.0.1 port $tproxy_port
+
+# --- filter rules ---
+# Pass proxy server traffic directly (prevent loops)
+pass out quick proto tcp from any to $proxy_server keep state
+# Pass local/VPN traffic directly
+pass out quick proto tcp from any to $skip_nets keep state
+# Pass lo0 traffic (pf2socks → SOCKS5 proxy)
+pass out quick on lo0 keep state
+# Route remaining outbound TCP to lo0 for rdr
+# NOTE: Add a line for each active network interface
+pass out quick on en0 route-to (lo0 127.0.0.1) proto tcp from any to any keep state
+# pass out quick on en18 route-to (lo0 127.0.0.1) proto tcp from any to any keep state
+# Pass non-TCP traffic normally
+pass out quick keep state
