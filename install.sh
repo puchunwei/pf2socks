@@ -242,13 +242,37 @@ start_daemon() {
 
 uninstall() {
     echo "=== 卸载 pf2socks ==="
+
+    # 1. 关闭 pf（如果是开启状态）
     pfctl -d 2>/dev/null || true
-    launchctl unload "$LAUNCHD_PLIST" 2>/dev/null || true
+
+    # 2. 停止 LaunchDaemon
+    if [ -f "$LAUNCHD_PLIST" ]; then
+        launchctl unload "$LAUNCHD_PLIST" 2>/dev/null || true
+    fi
+
+    # 3. 删除文件
     rm -f "$LAUNCHD_PLIST" "$INSTALL_BIN" "$INSTALL_CTL" "$SUDOERS_FILE"
-    echo "已删除: $INSTALL_BIN, $INSTALL_CTL, $LAUNCHD_PLIST, $SUDOERS_FILE"
-    echo "配置保留: $INSTALL_CONF_DIR"
-    echo "日志保留: $LOG_DIR"
-    echo "✅ 卸载完成"
+
+    echo "已删除:"
+    echo "  - $INSTALL_BIN"
+    echo "  - $INSTALL_CTL"
+    echo "  - $LAUNCHD_PLIST"
+    echo "  - $SUDOERS_FILE"
+    echo ""
+    echo "保留（可手动删除）:"
+    echo "  - $INSTALL_CONF_DIR (配置)"
+    echo "  - $LOG_DIR (日志)"
+    echo ""
+    echo "✅ pf2socks 卸载完成"
+    echo ""
+    echo "=== 其他清理（如之前配置了 xray 专用用户）==="
+    echo "  sudo bash scripts/setup-xray-dedicated-user.sh undo"
+    echo "  这会恢复 xray 到 brew services 管理"
+    echo ""
+    echo "=== 完全卸载（一键）==="
+    echo "  sudo bash scripts/uninstall-all.sh"
+    echo "  会同时卸载 pf2socks 和恢复 xray"
 }
 
 # ========== main ==========

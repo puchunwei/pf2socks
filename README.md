@@ -88,6 +88,46 @@ No `sudo` prefix needed. To remove the no-password privilege later:
 sudo rm /etc/sudoers.d/pf2socks
 ```
 
+## Uninstall / Restore
+
+### Uninstall pf2socks only
+
+```bash
+sudo bash install.sh uninstall
+```
+
+Removes:
+- `/usr/local/bin/pf2socks`
+- `/usr/local/bin/tproxy`
+- `/Library/LaunchDaemons/io.pf2socks.pf2socks.plist`
+- `/etc/sudoers.d/pf2socks`
+
+Preserved:
+- `/usr/local/etc/pf2socks/` (configs — delete manually if you want)
+- `/var/log/pf2socks/` (logs — delete manually if you want)
+
+### Full uninstall (pf2socks + xray dedicated user)
+
+```bash
+sudo bash scripts/uninstall-all.sh
+# or to also delete configs/logs:
+sudo bash scripts/uninstall-all.sh --force
+```
+
+Does everything:
+1. Turns off pf
+2. Uninstalls pf2socks
+3. Reverts xray to `brew services` (if you had used the dedicated-user setup)
+4. Removes the `_xray` user and group
+
+### Revert only the xray dedicated user setup
+
+```bash
+sudo bash scripts/setup-xray-dedicated-user.sh undo
+```
+
+Keeps pf2socks running, only restores xray to brew-managed.
+
 ## Advanced: Loop-free setup with dedicated user
 
 If your SOCKS5 proxy has **direct-connect rules** (e.g. xray with `geoip:cn → direct`), its outbound traffic will be caught by pf again → loop.

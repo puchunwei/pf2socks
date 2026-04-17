@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.2.2 (2026-04-17)
+
+### Added
+- **One-shot uninstall script** `scripts/uninstall-all.sh` — removes pf2socks AND reverts xray dedicated-user setup
+- **Uninstall / Restore section** in README (English + 中文) with three scenarios:
+  - pf2socks only
+  - Full uninstall
+  - Only revert xray dedicated user
+
+### Changed
+- `install.sh uninstall` output now points users to full uninstall and xray undo commands
+
 ## v0.2.1 (2026-04-17)
 
 ### Added

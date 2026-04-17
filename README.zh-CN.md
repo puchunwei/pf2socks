@@ -91,6 +91,44 @@ tproxy restart  # 重启 pf2socks
 sudo rm /etc/sudoers.d/pf2socks
 ```
 
+## 卸载 / 恢复
+
+### 只卸载 pf2socks
+
+```bash
+sudo bash install.sh uninstall
+```
+
+会删除：
+- `/usr/local/bin/pf2socks`
+- `/usr/local/bin/tproxy`
+- `/Library/LaunchDaemons/io.pf2socks.pf2socks.plist`
+- `/etc/sudoers.d/pf2socks`
+
+会保留（可手动删）：
+- `/usr/local/etc/pf2socks/`（配置）
+- `/var/log/pf2socks/`（日志）
+
+### 完全卸载（pf2socks + xray 专用用户）
+
+```bash
+sudo bash scripts/uninstall-all.sh
+# 或者顺便删除所有配置和日志：
+sudo bash scripts/uninstall-all.sh --force
+```
+
+会做：
+1. 关闭 pf
+2. 卸载 pf2socks
+3. 恢复 xray 到 `brew services` 管理（如果你之前配过专用用户）
+4. 删除 `_xray` 用户和组
+
+### 只恢复 xray 专用用户（保留 pf2socks）
+
+```bash
+sudo bash scripts/setup-xray-dedicated-user.sh undo
+```
+
 ## 进阶：用专用用户解决回环问题
 
 如果你的 SOCKS5 代理配了**直连规则**（比如 xray 的 `geoip:cn → direct`），它的出站流量会再被 pf 抓回来 → 死循环。
