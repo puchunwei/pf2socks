@@ -1,5 +1,7 @@
 # Architecture
 
+**Language**: English | [中文](architecture.zh-CN.md)
+
 ## Why macOS transparent proxy is hard
 
 ### Problem 1: pf rdr doesn't intercept local outbound

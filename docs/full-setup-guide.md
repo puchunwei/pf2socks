@@ -2,6 +2,8 @@
 
 A complete, loop-free macOS transparent proxy stack using pf2socks as the pf-to-SOCKS5 bridge and xray as the proxy engine.
 
+**Language**: English | [中文](full-setup-guide.zh-CN.md)
+
 ## Architecture
 
 ```

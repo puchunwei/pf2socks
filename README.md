@@ -4,6 +4,8 @@
 
 Works with any SOCKS5 proxy: xray, v2ray, sing-box, shadowsocks, clash, etc.
 
+**Language**: English | [中文](README.zh-CN.md)
+
 ## Why
 
 Setting up transparent proxy on macOS is hard because:
