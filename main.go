@@ -13,6 +13,7 @@ import (
 	"net"
 	"os"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -132,6 +133,18 @@ func connectViaSocks5(socksAddr, targetHost string, targetPort uint16) (net.Conn
 	return conn, nil
 }
 
+// peekFirstBytes reads up to maxLen bytes from conn with a timeout.
+// Returns what was read; the bytes are NOT consumed from the connection
+// (they will be replayed by prepending to the forwarding stream).
+func peekFirstBytes(conn net.Conn, maxLen int, timeout time.Duration) []byte {
+	conn.SetReadDeadline(time.Now().Add(timeout))
+	defer conn.SetReadDeadline(time.Time{})
+
+	buf := make([]byte, maxLen)
+	n, _ := conn.Read(buf)
+	return buf[:n]
+}
+
 func handleConn(conn net.Conn, socksAddr string) {
 	defer conn.Close()
 
@@ -140,7 +153,17 @@ func handleConn(conn net.Conn, socksAddr string) {
 		log.Printf("[%s] failed to get original dst: %v", conn.RemoteAddr(), err)
 		return
 	}
-	log.Printf("[%s] -> %s:%d", conn.RemoteAddr(), host, port)
+
+	// Peek first bytes to sniff domain (TLS SNI or HTTP Host).
+	// 200ms timeout — non-HTTP/TLS protocols won't send first, so we fall through.
+	peeked := peekFirstBytes(conn, 4096, 200*time.Millisecond)
+	domain := sniffDomain(peeked)
+
+	if domain != "" {
+		log.Printf("[%s] -> %s:%d (%s)", conn.RemoteAddr(), host, port, domain)
+	} else {
+		log.Printf("[%s] -> %s:%d", conn.RemoteAddr(), host, port)
+	}
 
 	remote, err := connectViaSocks5(socksAddr, host, port)
 	if err != nil {
@@ -148,6 +171,14 @@ func handleConn(conn net.Conn, socksAddr string) {
 		return
 	}
 	defer remote.Close()
+
+	// Replay the peeked bytes first, then stream the rest.
+	if len(peeked) > 0 {
+		if _, err := remote.Write(peeked); err != nil {
+			log.Printf("[%s] replay failed: %v", conn.RemoteAddr(), err)
+			return
+		}
+	}
 
 	done := make(chan struct{})
 	go func() {

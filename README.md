@@ -2,76 +2,100 @@
 
 **Transparent proxy helper for macOS** — translates pf rdr to SOCKS5, the macOS equivalent of [ipt2socks](https://github.com/zfl9/ipt2socks).
 
-## The Problem
+Works with any SOCKS5 proxy: xray, v2ray, sing-box, shadowsocks, clash, etc.
+
+## Why
 
 Setting up transparent proxy on macOS is hard because:
 
 1. **pf `rdr` doesn't intercept locally-originated traffic** — unlike Linux iptables, macOS pf redirect rules only apply to forwarded packets, not outbound packets from the host itself.
-2. **Proxy tools (xray, v2ray, etc.) can't get the original destination after pf rdr on macOS** — they rely on `SO_ORIGINAL_DST` which only works on Linux. macOS requires `DIOCNATLOOK` ioctl on `/dev/pf`, which most proxy tools don't implement.
+2. **Proxy tools can't get the original destination after pf rdr on macOS** — they rely on `SO_ORIGINAL_DST` (Linux-only). macOS requires `DIOCNATLOOK` ioctl on `/dev/pf`, which most proxy tools don't implement.
 
-## The Solution
-
-pf2socks solves both problems:
-
-1. Uses **`route-to` + `rdr on lo0`** pf rules to intercept local outbound traffic
-2. Queries the **original destination** via `DIOCNATLOOK` ioctl
-3. Forwards the connection to any **SOCKS5 proxy** (xray, v2ray, clash, etc.)
+pf2socks solves both:
+- Uses **`route-to` + `rdr on lo0`** pf rules to catch local outbound
+- Queries the **original destination** via `DIOCNATLOOK` ioctl
+- Forwards via **SOCKS5** to any upstream proxy
 
 ```
 App → pf route-to lo0 → rdr on lo0 → pf2socks → SOCKS5 proxy → target
 ```
 
+See [docs/architecture.md](docs/architecture.md) for the full technical story.
+
 ## Quick Start
 
-### Build
+### Install
 
 ```bash
-go build -o pf2socks
+git clone https://github.com/puchunwei/pf2socks.git
+cd pf2socks
+sudo bash install.sh 127.0.0.1:26662 127.0.0.1:1080   # listen, upstream socks5
 ```
 
-### Run
+The installer creates:
+- `/usr/local/bin/pf2socks` (the daemon binary)
+- `/usr/local/bin/tproxy` (control script)
+- `/Library/LaunchDaemons/io.pf2socks.pf2socks.plist` (auto-start on boot)
+- `/usr/local/etc/pf2socks/pf.conf.example` (template pf rules)
+
+### Configure pf rules
 
 ```bash
-# pf2socks [listen_addr] [socks5_addr]
-sudo ./pf2socks 127.0.0.1:1234 127.0.0.1:1080
+sudo cp /usr/local/etc/pf2socks/pf.conf.example /usr/local/etc/pf2socks/pf.conf
+sudo vim /usr/local/etc/pf2socks/pf.conf
 ```
 
-Requires root (reads `/dev/pf`).
+Edit:
+- `proxy_server` — your upstream proxy server IP (to prevent loops)
+- Network interfaces — replace `en0` with your actual one(s)
 
-### Configure pf
-
-Copy and edit the example pf rules:
+### Enable
 
 ```bash
-cp pf/pf-transparent.conf.example pf/pf-transparent.conf
-# Edit: set proxy_server IP, adjust interfaces (en0, en1, etc.)
-vim pf/pf-transparent.conf
+sudo tproxy on
 ```
 
-Load and enable:
+### Verify
 
 ```bash
-sudo pfctl -f pf/pf-transparent.conf && sudo pfctl -e
+curl https://ipinfo.io/ip    # should return your proxy IP
+tproxy status
 ```
 
-### Test
+### Emergency recovery
 
 ```bash
-# Should return your proxy IP, not your local IP
-curl https://ipinfo.io/ip
+sudo pfctl -d    # disable pf, restore all networking
 ```
 
-### Emergency Recovery
+## Daily Usage
 
 ```bash
-sudo pfctl -d    # Disable pf, restore all networking immediately
+sudo tproxy on       # enable transparent proxy
+sudo tproxy off      # disable pf (pf2socks keeps running)
+tproxy status        # current state
+tproxy log           # tail pf2socks logs
+sudo tproxy restart  # restart pf2socks
 ```
+
+## Advanced: Loop-free setup with dedicated user
+
+If your SOCKS5 proxy has **direct-connect rules** (e.g. xray with `geoip:cn → direct`), its outbound traffic will be caught by pf again → loop.
+
+Run the proxy as a dedicated user and add a `user` filter in pf:
+
+```bash
+sudo bash scripts/setup-xray-dedicated-user.sh    # for xray
+# then use pf/pf-transparent-user.conf.example
+```
+
+Full guide: [docs/full-setup-guide.md](docs/full-setup-guide.md).
 
 ## How It Works
 
 ### Why `route-to` is needed
 
-macOS pf `rdr` only processes packets arriving on an interface (inbound). Locally-originated packets go outbound, so `rdr` never sees them. The `route-to` rule on the outbound path forces packets through `lo0`, where `rdr on lo0` can intercept them.
+macOS pf `rdr` only processes packets arriving on an interface (inbound). Locally-originated packets go outbound, so `rdr` never sees them. `route-to` forces packets through `lo0`, where `rdr on lo0` catches them.
 
 ```
 Without route-to:  app → en0 (outbound) → rdr doesn't fire → direct connection
@@ -80,33 +104,25 @@ With route-to:     app → en0 (outbound) → route-to lo0 → rdr on lo0 fires 
 
 ### DIOCNATLOOK
 
-After pf redirects a connection, the original destination is stored in pf's NAT state table. pf2socks queries it via `DIOCNATLOOK` ioctl:
+After pf redirects a connection, the original destination is stored in pf's NAT state table. pf2socks queries it:
 
-- **ioctl number**: `0xc0544417` (`_IOWR('D', 23, struct pfioc_natlook)`, 84 bytes)
-- **direction**: `PF_OUT` (2)
-- **file**: `/dev/pf` opened with `O_RDWR`
+- **ioctl number**: `0xc0544417` (`_IOWR('D', 23, struct pfioc_natlook)`)
+- **direction**: `PF_OUT` (2)  ← crucial, not `PF_IN`
+- **file**: `/dev/pf` opened `O_RDWR`
 
-### Key pf rule: `quick` matters
+### `quick` matters
 
-The `route-to` rule **must** have the `quick` keyword, otherwise a later `pass out quick keep state` rule takes precedence and bypasses the route-to.
+The `route-to` rule **must** have `quick`, else a later `pass out quick keep state` overrides it:
 
 ```pf
-# WRONG: route-to without quick, gets overridden
-pass out on en0 route-to (lo0 127.0.0.1) proto tcp ...
-pass out quick keep state  # ← this wins
-
-# CORRECT: route-to with quick
-pass out quick on en0 route-to (lo0 127.0.0.1) proto tcp ...
-pass out quick keep state
+pass out quick on en0 route-to (lo0 127.0.0.1) proto tcp from any to any keep state
 ```
 
 ## Known Limitations
 
-- **TCP only** — UDP transparent proxy is not yet supported
-- **IPv4 only** — IPv6 support is planned
-- **Loop prevention** — If your SOCKS5 proxy has direct-connect rules, its outbound traffic will be caught by pf again. Solutions:
-  - Run proxy + pf2socks as a dedicated user, exclude with `pass out quick proto tcp user _proxy keep state`
-  - Or exclude the proxy server IP in pf rules (only works for the proxy upstream, not direct traffic)
+- **TCP only** — UDP transparent proxy not yet supported (DNS queries leak to system resolver)
+- **IPv4 only** — IPv6 support planned
+- **Loop prevention requires dedicated user** when proxy has direct-outbound rules
 
 ## Compared to Alternatives
 
@@ -114,7 +130,26 @@ pass out quick keep state
 |----------|:---:|:---:|:---:|
 | TUN mode (clash, sing-box) | ✅ | Yes — conflicts with VPN | ✅ |
 | iptables + ipt2socks | ❌ Linux only | No | ✅ (uid match) |
-| **pf + pf2socks** | **✅** | **No** | Needs dedicated user |
+| **pf + pf2socks** | **✅** | **No** | Yes (with `user` filter) |
+
+## Project Structure
+
+```
+pf2socks/
+├── main.go                                       # core: DIOCNATLOOK + SOCKS5
+├── sniff.go                                      # TLS SNI / HTTP Host sniffing
+├── install.sh                                    # one-line installer
+├── pf/
+│   ├── pf-transparent.conf.example               # basic pf rules
+│   └── pf-transparent-user.conf.example          # with user filter
+├── scripts/
+│   └── setup-xray-dedicated-user.sh              # dedicated user for xray
+├── docs/
+│   ├── full-setup-guide.md                       # full guide
+│   └── architecture.md                           # technical deep dive
+├── CHANGELOG.md
+└── LICENSE (MIT)
+```
 
 ## License
 

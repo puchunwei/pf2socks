@@ -1,0 +1,43 @@
+# macOS transparent proxy pf rules with dedicated user filter (loop-free)
+# Use this version when xray (or your SOCKS5 proxy) runs as dedicated user _xray
+# See: docs/full-setup-guide.md
+#
+# Benefit over pf-transparent.conf.example: prevents proxy loop when xray
+# has direct-outbound rules (e.g. geoip:cn -> direct).
+
+# --- Variables ---
+proxy_server = "YOUR_PROXY_SERVER_IP"
+tproxy_port = "26662"
+proxy_user = "_xray"
+
+# Networks to exclude from proxying
+skip_nets = "{ 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, \
+              100.64.0.0/10, 169.254.0.0/16, 224.0.0.0/4, 255.255.255.255/32 }"
+
+# --- rdr rules (on lo0) ---
+no rdr on lo0 proto tcp from any to 127.0.0.1
+no rdr on lo0 proto tcp from any to $proxy_server
+no rdr on lo0 proto tcp from any to $skip_nets
+rdr pass on lo0 proto tcp from any to any -> 127.0.0.1 port $tproxy_port
+
+# --- filter rules ---
+# KEY: pass xray's (proxy user's) outbound directly, no route-to
+# This prevents loops when xray routes traffic as "direct"
+pass out quick proto tcp user $proxy_user keep state
+
+# Proxy upstream server: pass directly (backup protection)
+pass out quick proto tcp from any to $proxy_server keep state
+
+# Local/VPN networks: pass directly
+pass out quick proto tcp from any to $skip_nets keep state
+
+# Loopback: pass (pf2socks → xray on 127.0.0.1:28880)
+pass out quick on lo0 keep state
+
+# Other outbound TCP: route-to lo0 to trigger rdr
+# NOTE: add a line for each active network interface
+pass out quick on en0 route-to (lo0 127.0.0.1) proto tcp from any to any keep state
+# pass out quick on en18 route-to (lo0 127.0.0.1) proto tcp from any to any keep state
+
+# Non-TCP traffic: pass normally
+pass out quick keep state
