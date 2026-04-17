@@ -75,12 +75,20 @@ sudo pfctl -d    # 关闭 pf，立即恢复所有网络
 
 ## 日常使用
 
+安装脚本会配置 `sudoers`，让 `admin` 组成员免密使用 `tproxy`（脚本内部自动用 `sudo` 提权）：
+
 ```bash
-sudo tproxy on       # 开启透明代理
-sudo tproxy off      # 关闭 pf（pf2socks 仍运行）
-tproxy status        # 查看状态
-tproxy log           # 实时看 pf2socks 日志
-sudo tproxy restart  # 重启 pf2socks
+tproxy on       # 开启透明代理
+tproxy off      # 关闭 pf（pf2socks 仍运行）
+tproxy status   # 查看状态
+tproxy log      # 实时看 pf2socks 日志
+tproxy restart  # 重启 pf2socks
+```
+
+**不需要 `sudo` 前缀**。如果以后想取消免密：
+
+```bash
+sudo rm /etc/sudoers.d/pf2socks
 ```
 
 ## 进阶：用专用用户解决回环问题

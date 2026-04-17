@@ -2,8 +2,9 @@
 # pf2socks 一键安装脚本
 # - 编译 pf2socks 到 /usr/local/bin
 # - 安装 LaunchDaemon，开机自启
-# - 安装 tproxy 控制脚本
+# - 安装 tproxy 控制脚本（admin 组免密）
 # - 生成示例 pf 规则
+# - 配置 sudoers 使 admin 组免密使用 tproxy
 #
 # 使用:
 #   sudo bash install.sh               # 默认参数安装
@@ -22,6 +23,7 @@ INSTALL_CONF_DIR="/usr/local/etc/pf2socks"
 LAUNCHD_PLIST="/Library/LaunchDaemons/io.pf2socks.pf2socks.plist"
 LAUNCHD_LABEL="io.pf2socks.pf2socks"
 LOG_DIR="/var/log/pf2socks"
+SUDOERS_FILE="/etc/sudoers.d/pf2socks"
 
 need_root() {
     if [ "$EUID" -ne 0 ]; then
@@ -127,20 +129,19 @@ install_tproxy_ctl() {
     cat > "$INSTALL_CTL" <<'CTL'
 #!/bin/bash
 # tproxy - pf2socks 透明代理开关控制
+# 自动检测权限，必要时通过 sudo 提权（配合 /etc/sudoers.d/pf2socks 免密）
 
 PF_CONF="/usr/local/etc/pf2socks/pf.conf"
 DAEMON_LABEL="io.pf2socks.pf2socks"
 
-need_sudo() {
-    if [ "$EUID" -ne 0 ]; then
-        echo "请用 sudo 运行: sudo tproxy $*"
-        exit 1
-    fi
-}
+# 自动提权：如果不是 root，重新用 sudo 执行自己
+# 配合 sudoers NOPASSWD，admin 用户无需输入密码
+if [ "$EUID" -ne 0 ]; then
+    exec sudo "$0" "$@"
+fi
 
 case "$1" in
     on)
-        need_sudo
         if [ ! -f "$PF_CONF" ]; then
             echo "❌ $PF_CONF 不存在，请先根据示例创建"
             echo "   示例：/usr/local/etc/pf2socks/pf.conf.example"
@@ -156,16 +157,15 @@ case "$1" in
         echo "✅ 透明代理已开启"
         ;;
     off)
-        need_sudo
         pfctl -d 2>&1 | grep -v "^No ALTQ\|^ALTQ"
         echo "✅ pf 已关闭（pf2socks 仍运行）"
         ;;
     status)
         echo "=== pf ==="
-        sudo pfctl -s info 2>/dev/null | head -3 || echo "无法查询（需 sudo）"
+        pfctl -s info 2>/dev/null | head -3
         echo ""
         echo "=== pf2socks ==="
-        if sudo launchctl list 2>/dev/null | grep -q "$DAEMON_LABEL"; then
+        if launchctl list | grep -q "$DAEMON_LABEL"; then
             pgrep -l pf2socks || echo "未运行"
         else
             echo "Daemon 未加载"
@@ -175,7 +175,6 @@ case "$1" in
         curl -s --max-time 5 https://ipinfo.io/ip 2>/dev/null || echo "请求失败"
         ;;
     restart)
-        need_sudo
         launchctl kickstart -k "system/$DAEMON_LABEL"
         echo "✅ pf2socks 已重启"
         ;;
@@ -183,7 +182,7 @@ case "$1" in
         tail -f /var/log/pf2socks/stderr.log
         ;;
     *)
-        echo "用法: sudo tproxy {on|off|status|restart|log}"
+        echo "用法: tproxy {on|off|status|restart|log}"
         echo ""
         echo "  on       - 启用透明代理（加载 pf 规则）"
         echo "  off      - 关闭 pf（保持 pf2socks 运行）"
@@ -196,6 +195,32 @@ esac
 CTL
     chmod 755 "$INSTALL_CTL"
     echo "已安装: $INSTALL_CTL"
+}
+
+install_sudoers() {
+    echo ""
+    echo "=== 配置 sudoers（admin 组免密）==="
+
+    # 写到临时文件先 visudo -c 校验，通过后再移动
+    local tmp_file="$(mktemp)"
+    cat > "$tmp_file" <<'SUDOERS'
+# pf2socks - 允许 admin 组免密使用 tproxy 控制脚本
+# macOS 的所有"管理员用户"默认都在 admin 组
+%admin ALL = (root) NOPASSWD: /usr/local/bin/tproxy
+SUDOERS
+
+    # 校验语法
+    if ! visudo -cf "$tmp_file" >/dev/null 2>&1; then
+        echo "❌ sudoers 语法校验失败，跳过安装"
+        rm -f "$tmp_file"
+        return 1
+    fi
+
+    # 移到目标位置（权限必须 440）
+    install -m 440 -o root -g wheel "$tmp_file" "$SUDOERS_FILE"
+    rm -f "$tmp_file"
+    echo "已安装: $SUDOERS_FILE"
+    echo "(admin 组用户执行 tproxy 时无需输入密码)"
 }
 
 start_daemon() {
@@ -219,8 +244,8 @@ uninstall() {
     echo "=== 卸载 pf2socks ==="
     pfctl -d 2>/dev/null || true
     launchctl unload "$LAUNCHD_PLIST" 2>/dev/null || true
-    rm -f "$LAUNCHD_PLIST" "$INSTALL_BIN" "$INSTALL_CTL"
-    echo "已删除: $INSTALL_BIN, $INSTALL_CTL, $LAUNCHD_PLIST"
+    rm -f "$LAUNCHD_PLIST" "$INSTALL_BIN" "$INSTALL_CTL" "$SUDOERS_FILE"
+    echo "已删除: $INSTALL_BIN, $INSTALL_CTL, $LAUNCHD_PLIST, $SUDOERS_FILE"
     echo "配置保留: $INSTALL_CONF_DIR"
     echo "日志保留: $LOG_DIR"
     echo "✅ 卸载完成"
@@ -243,6 +268,7 @@ build_binary
 install_plist "$LISTEN" "$SOCKS5"
 install_conf_example
 install_tproxy_ctl
+install_sudoers
 start_daemon
 
 echo ""
@@ -257,10 +283,12 @@ echo "下一步:"
 echo "  1. 编辑 pf 规则: sudo cp ${INSTALL_CONF_DIR}/pf.conf.example ${INSTALL_CONF_DIR}/pf.conf"
 echo "     并根据你的环境修改 proxy_server 等变量"
 echo ""
-echo "  2. 开启透明代理: sudo tproxy on"
+echo "  2. 开启透明代理: tproxy on    (admin 用户免密)"
 echo ""
-echo "  3. 查看状态:    tproxy status"
-echo "     关闭:        sudo tproxy off"
-echo "     看日志:      tproxy log"
+echo "  3. 其他命令:"
+echo "     tproxy off      - 关闭 pf"
+echo "     tproxy status   - 查看状态"
+echo "     tproxy restart  - 重启 pf2socks"
+echo "     tproxy log      - 实时日志"
 echo ""
 echo "卸载: sudo bash install.sh uninstall"

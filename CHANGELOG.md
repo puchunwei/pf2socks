@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.2.1 (2026-04-17)
+
+### Added
+- **Auto-elevation** in `tproxy` script — no need to type `sudo` prefix
+- **sudoers config** (`/etc/sudoers.d/pf2socks`) — admin group members can run `tproxy` without password
+- Installer validates sudoers syntax with `visudo -cf` before installing
+
+### Changed
+- `tproxy on/off/status/restart` — now called directly (no `sudo`)
+- `install.sh` adds `install_sudoers` step
+- Uninstall also removes `/etc/sudoers.d/pf2socks`
+
 ## v0.2.0 (2026-04-17)
 
 ### Added

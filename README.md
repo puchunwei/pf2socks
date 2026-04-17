@@ -72,12 +72,20 @@ sudo pfctl -d    # disable pf, restore all networking
 
 ## Daily Usage
 
+The installer configures `sudoers` so members of the `admin` group can use `tproxy` without entering a password (auto-elevation via `sudo` happens internally):
+
 ```bash
-sudo tproxy on       # enable transparent proxy
-sudo tproxy off      # disable pf (pf2socks keeps running)
-tproxy status        # current state
-tproxy log           # tail pf2socks logs
-sudo tproxy restart  # restart pf2socks
+tproxy on       # enable transparent proxy
+tproxy off      # disable pf (pf2socks keeps running)
+tproxy status   # current state
+tproxy log      # tail pf2socks logs
+tproxy restart  # restart pf2socks
+```
+
+No `sudo` prefix needed. To remove the no-password privilege later:
+
+```bash
+sudo rm /etc/sudoers.d/pf2socks
 ```
 
 ## Advanced: Loop-free setup with dedicated user
